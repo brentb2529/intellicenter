@@ -29,8 +29,10 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from pyintellicenter import (
+    BODY_TYPE,
     CHEM_TYPE,
     GPM_ATTR,
+    LSTTMP_ATTR,
     MAX_ATTR,
     MAXF_ATTR,
     MIN_ATTR,
@@ -80,6 +82,25 @@ def _build_entities(
                     obj,
                     device_class=SensorDeviceClass.TEMPERATURE,
                     attribute_key=SOURCE_ATTR,
+                )
+            )
+        elif obj.objtype == BODY_TYPE and obj[LSTTMP_ATTR] is not None:
+            # Body water temperature (LSTTMP). This is the body's last-measured
+            # water temperature; the body's water_heater/climate entity exposes
+            # the same reading as ``current_temperature``, but that is an
+            # attribute of a control entity, not a standalone sensor with
+            # long-term statistics. A dedicated TEMPERATURE sensor (state_class
+            # MEASUREMENT by default) gives the pool/spa water temperature a
+            # stable, separately bindable entity that feeds the statistics
+            # engine and history graphs. Read-only; uses the same dynamic
+            # Fahrenheit/Celsius unit resolution as the SENSE probe sensors.
+            sensors.append(
+                PoolSensor(
+                    coordinator,
+                    obj,
+                    device_class=SensorDeviceClass.TEMPERATURE,
+                    attribute_key=LSTTMP_ATTR,
+                    name="+ Water Temperature",
                 )
             )
         elif obj.objtype == PUMP_TYPE:

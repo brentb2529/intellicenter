@@ -160,7 +160,9 @@ async def test_sensor_setup_creates_entities(
     # - SENSE1 (air temp)
     # - PUMP1 (power, RPM, GPM = 3)
     # - CHEM1 (pH, ORP, pH tank, ORP tank = 4)
-    # Note: Body temps (POOL1/SPA01) are in water_heater, not sensors
+    # - POOL1/SPA01 body water temperature (LSTTMP) standalone sensors. These
+    #   mirror the body's water_heater current_temperature but exist as their
+    #   own TEMPERATURE sensors for long-term statistics and stable binding.
     assert len(entities_added) >= 8
 
 
@@ -414,6 +416,123 @@ async def test_intellichlor_salt_sensor(
 
     assert sensor.native_value == 3200
     assert sensor.native_unit_of_measurement == CONCENTRATION_PARTS_PER_MILLION
+
+
+async def test_body_water_temperature_sensor(
+    hass: HomeAssistant,
+    pool_object_body: PoolObject,
+    mock_coordinator: MagicMock,
+) -> None:
+    """A body exposes its water temperature (LSTTMP) as a TEMPERATURE sensor.
+
+    The reading mirrors the body's water_heater/climate current_temperature but
+    as a standalone sensor with MEASUREMENT state_class for long-term stats, a
+    dynamic temperature unit, and a unique_id distinct from the water_heater
+    (LOTMP) and climate (_climate) entities for the same body.
+    """
+    from pyintellicenter import LSTTMP_ATTR
+
+    sensor = PoolSensor(
+        mock_coordinator,
+        pool_object_body,
+        device_class=SensorDeviceClass.TEMPERATURE,
+        attribute_key=LSTTMP_ATTR,
+        name="+ Water Temperature",
+    )
+
+    assert sensor.native_value == 78
+    assert sensor.name == "Pool Water Temperature"
+    assert sensor._attr_device_class == SensorDeviceClass.TEMPERATURE
+    assert sensor._attr_state_class == SensorStateClass.MEASUREMENT
+    assert sensor.native_unit_of_measurement == str(UnitOfTemperature.FAHRENHEIT)
+    # Distinct from water_heater (LOTMP) and climate (_climate) for this body.
+    assert sensor.unique_id == "test_entry_POOL1LSTTMP"
+    assert sensor.isUpdated({"POOL1": {LSTTMP_ATTR: "80"}}) is True
+    assert sensor.isUpdated({"POOL1": {"LOTMP": "72"}}) is False
+
+
+async def test_body_water_temperature_sensor_created_in_setup(
+    hass: HomeAssistant,
+    mock_coordinator: MagicMock,
+) -> None:
+    """async_setup_entry creates a water-temperature sensor for a body with LSTTMP."""
+    from pyintellicenter import LSTTMP_ATTR
+
+    model = PoolModel()
+    model.add_objects(
+        [
+            {
+                "objnam": "POOL1",
+                "params": {
+                    "OBJTYP": BODY_TYPE,
+                    "SUBTYP": "POOL",
+                    "SNAME": "Pool",
+                    "LSTTMP": "78",
+                    "LOTMP": "72",
+                },
+            }
+        ]
+    )
+    mock_coordinator.model = model
+
+    mock_entry = MagicMock()
+    mock_entry.entry_id = "test_entry"
+    mock_entry.runtime_data = mock_coordinator
+
+    entities_added: list[object] = []
+
+    from custom_components.intellicenter.sensor import async_setup_entry
+
+    await async_setup_entry(hass, mock_entry, entities_added.extend)
+
+    water_temps = [
+        e
+        for e in entities_added
+        if isinstance(e, PoolSensor) and e._attribute_key == LSTTMP_ATTR
+    ]
+    assert len(water_temps) == 1
+    assert water_temps[0].device_class == SensorDeviceClass.TEMPERATURE
+
+
+async def test_body_without_lsttmp_has_no_water_temp_sensor(
+    hass: HomeAssistant,
+    mock_coordinator: MagicMock,
+) -> None:
+    """A body that does not report LSTTMP yields no water-temperature sensor."""
+    from pyintellicenter import LSTTMP_ATTR
+
+    model = PoolModel()
+    model.add_objects(
+        [
+            {
+                "objnam": "POOL1",
+                "params": {
+                    "OBJTYP": BODY_TYPE,
+                    "SUBTYP": "POOL",
+                    "SNAME": "Pool",
+                    # No LSTTMP reported.
+                },
+            }
+        ]
+    )
+    mock_coordinator.model = model
+
+    mock_entry = MagicMock()
+    mock_entry.entry_id = "test_entry"
+    mock_entry.runtime_data = mock_coordinator
+
+    entities_added: list[object] = []
+
+    from custom_components.intellicenter.sensor import async_setup_entry
+
+    await async_setup_entry(hass, mock_entry, entities_added.extend)
+
+    water_temps = [
+        e
+        for e in entities_added
+        if isinstance(e, PoolSensor) and e._attribute_key == LSTTMP_ATTR
+    ]
+    assert water_temps == []
 
 
 async def test_sensor_native_value_none(
