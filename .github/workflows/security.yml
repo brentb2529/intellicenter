@@ -1,0 +1,49 @@
+name: security
+# Always-on security gate (kit §11): secret scan + SAST + dependency audit.
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "0 7 * * 1"   # weekly history re-scan
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  gitleaks:
+    name: gitleaks (secret scan, full history)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # scan history, not just the diff
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  codeql:
+    name: CodeQL (Python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: python
+      - uses: github/codeql-action/analyze@v3
+
+  pip-audit:
+    name: pip-audit (dependency vulnerabilities)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install pip-audit
+      - name: audit integration + test requirements
+        run: |
+          # manifest requirement + test deps
+          python -c "import json;print('\n'.join(json.load(open('custom_components/intellicenter/manifest.json'))['requirements']))" > _reqs.txt
+          [ -f requirements-test.txt ] && cat requirements-test.txt >> _reqs.txt || true
+          pip-audit -r _reqs.txt
